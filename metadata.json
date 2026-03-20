@@ -1,0 +1,5 @@
+{
+  "name": "RepoGraph",
+  "description": "An Obsidian-like graph view for GitHub repositories.",
+  "requestFramePermissions": []
+}
