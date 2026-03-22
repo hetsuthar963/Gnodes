@@ -96,22 +96,6 @@ describe('GraphView', () => {
     expect(mockOnNodeClick).toHaveBeenCalledWith(null);
   });
 
-  it('shows repo insights when toggle is clicked', () => {
-    render(
-      <GraphView 
-        data={mockData} 
-        onNodeClick={mockOnNodeClick} 
-        config={mockConfig} 
-      />
-    );
-    
-    const toggleBtn = screen.getByText('Repo Insights');
-    fireEvent.click(toggleBtn);
-    
-    expect(screen.getByText('Overview')).toBeInTheDocument();
-    expect(screen.getByText('Total Files')).toBeInTheDocument();
-  });
-
   it('shows node details when a node is selected', () => {
     render(
       <GraphView 

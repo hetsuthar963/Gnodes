@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+import { toPng, toSvg } from 'html-to-image';
 import { GraphData, FileNode } from '../utils/parser';
-import { forceCollide, forceX, forceY, forceRadial, forceManyBody, forceLink } from 'd3-force';
 import { Search, BarChart2, AlertTriangle, X, Target, FileText, Download, BrainCircuit } from 'lucide-react';
 import FileViewer from './FileViewer';
 import { GraphConfig } from './TaxonomySidebar';
@@ -43,16 +43,14 @@ interface GraphViewProps {
   commits?: any[];
   contributors?: any[];
   onNodeClick: (node: FileNode | null) => void;
+  onLinkClick?: (link: any) => void;
+  onStatsChange?: (stats: any) => void;
   selectedNodeId?: string;
   config: GraphConfig;
   theme?: 'dark' | 'light';
 }
 
-export default function GraphView({ data, commits = [], contributors = [], onNodeClick, selectedNodeId, config, theme = 'dark' }: GraphViewProps) {
-  const fgRef = useRef<any>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  
+export default function GraphView({ data, commits = [], contributors = [], onNodeClick, onLinkClick, onStatsChange, selectedNodeId, config, theme = 'dark' }: GraphViewProps) {
   const [hoverNode, setHoverNode] = useState<FileNode | null>(null);
   const [hoverLink, setHoverLink] = useState<any | null>(null);
   
@@ -61,6 +59,30 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
   const [showStats, setShowStats] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
+  const chartRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (chartRef.current) {
+        chartRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (tooltipRef.current) {
+        tooltipRef.current.style.left = `${e.clientX + 15}px`;
+        tooltipRef.current.style.top = `${e.clientY + 15}px`;
+      }
+    };
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    return () => window.removeEventListener('mousemove', handleGlobalMouseMove);
+  }, []);
 
   const handleAskAI = async (node: FileNode) => {
     if (!node.content) return;
@@ -75,41 +97,6 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
     } finally {
       setAiLoading(false);
     }
-  };
-
-  const handleExport = (format: 'json' | 'graphml') => {
-    let content = '';
-    let filename = `graph-export.${format}`;
-    let mimeType = 'text/plain';
-
-    if (format === 'json') {
-      content = JSON.stringify(displayData, null, 2);
-      mimeType = 'application/json';
-    } else if (format === 'graphml') {
-      content = `<?xml version="1.0" encoding="UTF-8"?>\n<graphml xmlns="http://graphml.graphdrawing.org/xmlns">\n  <graph id="G" edgedefault="directed">\n`;
-      displayData.nodes.forEach(n => {
-        content += `    <node id="${n.id.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"/>\n`;
-      });
-      displayData.links.forEach(l => {
-        const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;
-        const targetId = typeof l.target === 'object' ? (l.target as any).id : l.target;
-        if (sourceId && targetId) {
-          content += `    <edge source="${sourceId.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}" target="${targetId.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"/>\n`;
-        }
-      });
-      content += `  </graph>\n</graphml>`;
-      mimeType = 'application/xml';
-    }
-
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   // Compute display data based on model
@@ -174,7 +161,9 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
           name: (c.commit?.message || '').split('\n')[0].substring(0, 30),
           path: c.sha.substring(0, 7),
           type: 'commit',
-          val: 15
+          val: 15,
+          author: c.commit?.author?.name,
+          date: c.commit?.author?.date || c.commit?.committer?.date
         });
       });
       
@@ -199,7 +188,9 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
         name: (c.commit?.message || '').split('\n')[0].substring(0, 50),
         path: `${c.sha.substring(0, 7)} by ${c.commit?.author?.name}`,
         type: 'commit',
-        val: 10
+        val: 10,
+        author: c.commit?.author?.name,
+        date: c.commit?.author?.date || c.commit?.committer?.date
       }));
 
       const links: any[] = [];
@@ -242,6 +233,51 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
     return data;
   }, [data, config.model, commits, contributors]);
 
+  const displayDataRef = useRef(displayData);
+  const onNodeClickRef = useRef(onNodeClick);
+  const setHoverNodeRef = useRef(setHoverNode);
+
+  useEffect(() => {
+    displayDataRef.current = displayData;
+    onNodeClickRef.current = onNodeClick;
+    setHoverNodeRef.current = setHoverNode;
+  }, [displayData, onNodeClick, setHoverNode]);
+
+  const handleExport = useCallback(async (format: 'json' | 'graphml') => {
+    let content = '';
+    let filename = `graph-export.${format}`;
+    let mimeType = 'text/plain';
+
+    if (format === 'json') {
+      content = JSON.stringify(displayData, null, 2);
+      mimeType = 'application/json';
+    } else if (format === 'graphml') {
+      content = `<?xml version="1.0" encoding="UTF-8"?>\n<graphml xmlns="http://graphml.graphdrawing.org/xmlns">\n  <graph id="G" edgedefault="directed">\n`;
+      displayData.nodes.forEach(n => {
+        content += `    <node id="${n.id.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"/>\n`;
+      });
+      displayData.links.forEach((l: any) => {
+        const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;
+        const targetId = typeof l.target === 'object' ? (l.target as any).id : l.target;
+        if (sourceId && targetId) {
+          content += `    <edge source="${sourceId.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}" target="${targetId.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}"/>\n`;
+        }
+      });
+      content += `  </graph>\n</graphml>`;
+      mimeType = 'application/xml';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [displayData, config.model, theme]);
+
   // Compute metrics
   const degrees = useMemo(() => {
     const deg = new Map<string, number>();
@@ -255,23 +291,6 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
     return deg;
   }, [displayData]);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (let entry of entries) {
-        setDimensions({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height,
-        });
-      }
-    });
-
-    resizeObserver.observe(containerRef.current);
-    return () => resizeObserver.disconnect();
-  }, []);
-
-  // Compute clusters based on directory path
   const clusters = useMemo(() => {
     const getDir = (path: string | undefined) => {
       if (!path) return 'root';
@@ -294,67 +313,6 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
     
     return map;
   }, [displayData.nodes]);
-
-  useEffect(() => {
-    if (fgRef.current) {
-      const fg = fgRef.current;
-      
-      // Reset forces
-      fg.d3Force('charge', null);
-      fg.d3Force('link', null);
-      fg.d3Force('collide', null);
-      fg.d3Force('clusterX', null);
-      fg.d3Force('clusterY', null);
-      fg.d3Force('radial', null);
-
-      if (config.encoding === 'circular') {
-        const radius = Math.max(300, displayData.nodes.length * 8);
-        fg.d3Force('radial', forceRadial(radius, 0, 0).strength(0.8));
-        fg.d3Force('collide', forceCollide().radius(15).iterations(2));
-        fg.d3Force('charge', forceManyBody().strength(-50));
-      } else if (config.encoding === 'force') {
-        fg.d3Force('charge', forceManyBody().strength(-400).distanceMax(1200));
-        fg.d3Force('link', forceLink().distance(120));
-        fg.d3Force('collide', forceCollide().radius(30).iterations(3));
-        
-        if (config.metric === 'cluster') {
-          fg.d3Force('clusterX', forceX((node: any) => {
-            if (!node.path) return 0;
-            const parts = node.path.split('/');
-            const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : 'root';
-            return clusters.get(dir)?.x || 0;
-          }).strength(0.15));
-          
-          fg.d3Force('clusterY', forceY((node: any) => {
-            if (!node.path) return 0;
-            const parts = node.path.split('/');
-            const dir = parts.length > 1 ? parts.slice(0, -1).join('/') : 'root';
-            return clusters.get(dir)?.y || 0;
-          }).strength(0.15));
-        }
-      } else {
-        // DAG modes
-        fg.d3Force('charge', forceManyBody().strength(-200));
-        fg.d3Force('collide', forceCollide().radius(20).iterations(2));
-        fg.d3Force('link', forceLink().distance(50));
-      }
-      
-      setTimeout(() => {
-        if (fgRef.current) fgRef.current.zoomToFit(800, 50);
-      }, 800);
-    }
-  }, [displayData, config, clusters]);
-
-  // Center camera on selected node
-  useEffect(() => {
-    if (selectedNodeId && fgRef.current) {
-      const node = data.nodes.find(n => n.id === selectedNodeId) as any;
-      if (node && node.x !== undefined && node.y !== undefined) {
-        fgRef.current.centerAt(node.x, node.y, 1000);
-        fgRef.current.zoom(3, 1000);
-      }
-    }
-  }, [selectedNodeId, data.nodes]);
 
   const getNodeColor = useCallback((node: any) => {
     switch (node.type) {
@@ -403,6 +361,12 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
       outDegree
     };
   }, [displayData]);
+
+  useEffect(() => {
+    if (onStatsChange) {
+      onStatsChange(stats);
+    }
+  }, [stats, onStatsChange]);
 
   // Compute highlighted nodes and links (including search)
   const { highlightNodes, highlightLinks, searchMatchNodes } = useMemo(() => {
@@ -460,205 +424,102 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
     return { highlightNodes: nodes, highlightLinks: links, searchMatchNodes: searchMatches };
   }, [displayData, hoverNode, hoverLink, selectedNodeId, searchQuery]);
 
-  // Handle drawing Neural-style nodes with smooth animation
-  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    if (node.x === undefined || node.y === undefined) return;
-    const isSelected = node.id === selectedNodeId;
-    const isHovered = node.id === hoverNode?.id;
-    const isSearchMatch = searchMatchNodes.has(node.id);
-    const isHighlighted = highlightNodes.has(node.id);
-    
-    // Dim if there are highlights/searches and this node isn't part of them
-    const isDimmed = (highlightNodes.size > 0 && !isHighlighted) || (searchQuery.trim() !== '' && !isSearchMatch && !isHighlighted);
-    
-    // Base radius from parser (based on length and connections)
-    const baseR = config.metric === 'centrality' 
-      ? 4 + Math.sqrt(degrees.get(node.id) || 0) * 3
-      : 4 + (node.val || 1) * 1.2;
-    
-    // Target radius based on state
-    const targetR = isHovered ? baseR * 1.5 : (isSelected ? baseR * 1.3 : (isHighlighted ? baseR * 1.2 : baseR));
-    
-    if (node.__currentR === undefined) node.__currentR = baseR;
-    node.__currentR += (targetR - node.__currentR) * 0.2;
-    const NODE_R = node.__currentR;
-    
-    const colors = getNodeColor(node);
-    const isDark = theme === 'dark';
-    ctx.globalAlpha = isDimmed ? 0.15 : 1;
-
-    ctx.shadowBlur = isHighlighted ? 25 : 10;
-    ctx.shadowColor = colors.border;
-
-    if (isSelected || isHovered) {
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, NODE_R + 6, 0, 2 * Math.PI, false);
-      ctx.fillStyle = isHovered 
-        ? (isDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.2)') 
-        : (isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)');
-      ctx.fill();
-    }
-
-    // Search Match Ring
-    if (isSearchMatch) {
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, NODE_R + 10, 0, 2 * Math.PI, false);
-      ctx.strokeStyle = isDark ? 'rgba(250, 204, 21, 0.8)' : 'rgba(234, 179, 8, 0.8)'; // Yellow ring
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, NODE_R, 0, 2 * Math.PI, false);
-    ctx.fillStyle = colors.fill;
-    ctx.fill();
-    
-    ctx.shadowBlur = 0;
-    
-    ctx.lineWidth = isSelected || isHovered ? 3 : 1.5;
-    ctx.strokeStyle = isSelected || isHovered ? (isDark ? '#ffffff' : '#000000') : colors.border;
-    ctx.stroke();
-
-    const label = node.name;
-    
-    if (node.type === 'contributor' && node.avatar) {
-      if (!node.__img) {
-        const img = new Image();
-        img.src = node.avatar;
-        node.__img = img;
-      }
-      if (node.__img.complete) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, NODE_R, 0, 2 * Math.PI, false);
-        ctx.clip();
-        ctx.drawImage(node.__img, node.x - NODE_R, node.y - NODE_R, NODE_R * 2, NODE_R * 2);
-        ctx.restore();
-      }
-    } else {
-      const shortName = label ? label.split('.').pop()?.toUpperCase() || '' : '';
-      
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      
-      const innerFontSize = Math.max(6, NODE_R * 0.4);
-      ctx.font = `bold ${innerFontSize}px Inter, sans-serif`;
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(shortName.substring(0, 4), node.x, node.y);
-    }
-
-    if (globalScale > 1.2 || isHighlighted || isSearchMatch) {
-      const baseFontSize = isHighlighted || isSearchMatch ? 14 : 10;
-      const fontSize = baseFontSize / Math.max(1, globalScale / 2);
-      ctx.font = `${isHighlighted || isSearchMatch ? 'bold ' : ''}${fontSize}px Inter, sans-serif`;
-      
-      const textWidth = ctx.measureText(label).width;
-      const bgWidth = textWidth + 12;
-      const bgHeight = fontSize + 8;
-      const bgX = node.x - bgWidth / 2;
-      const bgY = node.y + NODE_R + 6;
-      
-      ctx.fillStyle = isHighlighted || isSearchMatch 
-        ? (isDark ? 'rgba(20, 20, 20, 0.9)' : 'rgba(255, 255, 255, 0.9)') 
-        : (isDark ? 'rgba(30, 30, 30, 0.75)' : 'rgba(240, 240, 240, 0.85)');
-      if (ctx.roundRect) {
-        ctx.beginPath();
-        ctx.roundRect(bgX, bgY, bgWidth, bgHeight, 6);
-        ctx.fill();
-      } else {
-        ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
-      }
-      
-      ctx.fillStyle = isHighlighted || isSearchMatch 
-        ? (isDark ? '#ffffff' : '#000000') 
-        : (isDark ? 'rgba(255, 255, 255, 0.9)' : 'rgba(0, 0, 0, 0.8)');
-      ctx.fillText(label, node.x, bgY + bgHeight / 2);
-    }
-    
-    ctx.globalAlpha = 1;
-  }, [getNodeColor, highlightNodes, searchMatchNodes, hoverNode, selectedNodeId, searchQuery, config.metric, degrees, theme]);
+  const getDagMode = () => {
+    if (config.encoding === 'dag-td') return 'td';
+    if (config.encoding === 'dag-lr') return 'lr';
+    if (config.encoding === 'radial') return 'radialout';
+    return undefined;
+  };
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-white dark:bg-[#050505] overflow-hidden rounded-xl border border-zinc-200 dark:border-white/10 shadow-lg relative font-sans transition-colors">
+    <div 
+      ref={containerRef}
+      className="w-full h-full bg-white dark:bg-[#050505] overflow-hidden rounded-xl border border-zinc-200 dark:border-white/10 shadow-lg relative font-sans transition-colors"
+    >
       <ForceGraph2D
-        ref={fgRef}
-        width={dimensions.width}
-        height={dimensions.height}
+        ref={chartRef}
         graphData={displayData}
-        nodeLabel=""
-        nodeRelSize={16}
-        
-        dagMode={['dag-td', 'dag-lr', 'radial'].includes(config.encoding) ? config.encoding.replace('dag-', '').replace('radial', 'radialout') as any : undefined}
-        dagLevelDistance={80}
-        
+        nodeId="id"
+        nodeLabel="name"
+        dagMode={getDagMode()}
+        dagLevelDistance={50}
+        nodeColor={(node: any) => getNodeColor(node).fill}
+        nodeRelSize={6}
+        nodeVal={(node: any) => {
+          const val = node.val || 1;
+          return config.metric === 'centrality' 
+            ? 1 + Math.sqrt(degrees.get(node.id) || 0)
+            : val;
+        }}
         linkColor={(link: any) => {
-          if (hoverLink === link) return theme === 'dark' ? 'rgba(255, 255, 255, 1)' : 'rgba(0, 0, 0, 0.8)';
-          return highlightLinks.has(link) 
-            ? (theme === 'dark' ? 'rgba(100, 200, 255, 0.8)' : 'rgba(59, 130, 246, 0.8)') 
-            : (theme === 'dark' ? 'rgba(100, 150, 255, 0.15)' : 'rgba(100, 150, 255, 0.3)');
+          const isHighlighted = highlightLinks.has(link);
+          const isDimmed = highlightNodes.size > 0 && !isHighlighted;
+          if (isHighlighted) return theme === 'dark' ? '#60a5fa' : '#3b82f6';
+          if (isDimmed) return theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+          return theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)';
         }}
-        linkWidth={(link: any) => {
-          if (hoverLink === link) return 4;
-          return highlightLinks.has(link) ? 2 : 1;
-        }}
-        linkCurvature={config.encoding === 'force' ? 0.25 : 0} 
-        linkDirectionalArrowLength={config.encoding === 'force' ? 0 : 4}
+        linkWidth={(link: any) => highlightLinks.has(link) ? 3 : Math.max(0.5, Math.min(5, Math.sqrt(link.value || 1)))}
+        linkDirectionalArrowLength={config.encoding === 'dag-td' || config.encoding === 'dag-lr' ? 3.5 : 0}
         linkDirectionalArrowRelPos={1}
-        
-        linkDirectionalParticles={(link: any) => {
-          if (hoverLink === link) return 6;
-          return highlightLinks.has(link) ? 4 : 1;
+        linkHoverPrecision={10}
+        linkLabel={(link: any) => {
+          const sourceName = link.source.name || link.source;
+          const targetName = link.target.name || link.target;
+          return `${sourceName} → ${targetName}${link.type ? ` (${link.type})` : ''}`;
         }}
-        linkDirectionalParticleWidth={(link: any) => {
-          if (hoverLink === link) return 4;
-          return highlightLinks.has(link) ? 3 : 1.5;
-        }}
-        linkDirectionalParticleSpeed={(link: any) => highlightLinks.has(link) ? 0.008 : 0.002}
-        linkDirectionalParticleColor={(link: any) => highlightLinks.has(link) ? '#ffffff' : 'rgba(100, 200, 255, 0.5)'}
-        
         onNodeClick={(node: any) => {
-          if (node.type !== 'folder') {
+          if (node && node.type !== 'folder') {
             onNodeClick(node as FileNode);
           }
         }}
-        onBackgroundClick={() => onNodeClick(null)}
-        onNodeHover={(node) => setHoverNode(node as FileNode | null)}
-        onLinkHover={(link) => setHoverLink(link)}
-        backgroundColor={theme === 'dark' ? '#050505' : '#ffffff'}
-        
-        nodeCanvasObject={paintNode}
-        nodePointerAreaPaint={(node: any, color, ctx) => {
-          if (node.x === undefined || node.y === undefined) return;
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          const hitRadius = Math.max(30, (node.__currentR || 14) + 10);
-          ctx.arc(node.x, node.y, hitRadius, 0, 2 * Math.PI, false);
-          ctx.fill();
+        onNodeHover={(node: any) => {
+          setHoverNode(node || null);
         }}
-        linkPointerAreaPaint={(link: any, color, ctx) => {
-          if (link.source.x === undefined || link.target.x === undefined) return;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 10;
-          ctx.beginPath();
-          ctx.moveTo(link.source.x, link.source.y);
-          if (config.encoding === 'force') {
-            ctx.quadraticCurveTo(
-              (link.source.x + link.target.x) / 2,
-              (link.source.y + link.target.y) / 2,
-              link.target.x,
-              link.target.y
-            );
-          } else {
-            ctx.lineTo(link.target.x, link.target.y);
+        onLinkHover={(link: any) => {
+          setHoverLink(link || null);
+        }}
+        nodeCanvasObject={(node: any, ctx, globalScale) => {
+          const label = node.name;
+          const fontSize = 12 / globalScale;
+          ctx.font = `${fontSize}px Sans-Serif`;
+          const textWidth = ctx.measureText(label).width;
+          const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
+
+          const isHighlighted = highlightNodes.has(node.id);
+          const isDimmed = highlightNodes.size > 0 && !isHighlighted;
+          const isSearchMatch = searchMatchNodes.has(node.id);
+          const isSelected = node.id === selectedNodeId;
+          const isHovered = node.id === hoverNode?.id;
+
+          ctx.fillStyle = isHighlighted || isSearchMatch || isSelected || isHovered ? (theme === 'dark' ? 'rgba(30,30,30,0.8)' : 'rgba(240,240,240,0.8)') : 'rgba(255, 255, 255, 0)';
+          if (isHighlighted || isSearchMatch || isSelected || isHovered) {
+            ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
           }
-          ctx.stroke();
+
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = isDimmed ? (theme === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)') : (theme === 'dark' ? '#ffffff' : '#000000');
+          
+          ctx.beginPath();
+          const val = node.val || 1;
+          const r = config.metric === 'centrality' 
+            ? 2 + Math.sqrt(degrees.get(node.id) || 0)
+            : val;
+          ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+          ctx.fillStyle = getNodeColor(node).fill;
+          if (isDimmed) ctx.globalAlpha = 0.2;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+
+          if (globalScale > 1.5 || isHighlighted || isSearchMatch || isSelected || isHovered) {
+            ctx.fillStyle = isDimmed ? (theme === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)') : (theme === 'dark' ? '#ffffff' : '#000000');
+            ctx.fillText(label, node.x, node.y + r + fontSize);
+          }
         }}
       />
       
-      {/* Top Center: Search Bar */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 w-80 z-10">
+      {/* Top Left: Search Bar */}
+      <div className="absolute top-4 left-4 w-80 z-10">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500" />
           <input
@@ -680,96 +541,23 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
       </div>
 
       {/* Top Left: Stats Toggle & Panel */}
-      <div className="absolute top-4 left-4 z-10 flex flex-col items-start">
-        <button
-          onClick={() => setShowStats(!showStats)}
-          className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg shadow-lg backdrop-blur-md border transition-colors ${
-            showStats ? 'bg-indigo-600/90 border-indigo-500 text-white' : 'bg-white/90 dark:bg-[#1e1e1e]/90 border-zinc-200 dark:border-white/10 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-50 dark:hover:bg-[#2a2a2a]'
-          }`}
-        >
-          <BarChart2 className="w-4 h-4" />
-          <span className="text-sm font-medium">Repo Insights</span>
-        </button>
-
-        {showStats && (
-          <div className="mt-2 w-80 bg-white/95 dark:bg-[#1e1e1e]/95 backdrop-blur-xl border border-zinc-200 dark:border-white/10 rounded-xl shadow-2xl p-4 flex flex-col space-y-5 max-h-[70vh] overflow-y-auto custom-scrollbar transition-colors">
-            {/* Overview */}
-            <div>
-              <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3">Overview</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-zinc-50 dark:bg-black/30 rounded-lg p-3 border border-zinc-100 dark:border-white/5 transition-colors">
-                  <div className="text-2xl font-light text-zinc-900 dark:text-white">{stats.totalNodes}</div>
-                  <div className="text-xs text-zinc-500 mt-1">Total Files</div>
-                </div>
-                <div className="bg-zinc-50 dark:bg-black/30 rounded-lg p-3 border border-zinc-100 dark:border-white/5 transition-colors">
-                  <div className="text-2xl font-light text-zinc-900 dark:text-white">{stats.totalLinks}</div>
-                  <div className="text-xs text-zinc-500 mt-1">Dependencies</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Hubs */}
-            <div>
-              <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3 flex items-center">
-                <Target className="w-3.5 h-3.5 mr-1.5" /> Key Hubs (Most Imported)
-              </h3>
-              <div className="space-y-2">
-                {stats.topDependencies.map((node, i) => (
-                  <div key={node.id} className="flex items-center justify-between bg-zinc-50 dark:bg-black/20 p-2 rounded border border-zinc-100 dark:border-white/5 cursor-pointer hover:bg-zinc-100 dark:hover:bg-white/5 transition-colors" onClick={() => onNodeClick(node)}>
-                    <span className="text-sm text-zinc-700 dark:text-zinc-300 truncate pr-2">{node.name}</span>
-                    <span className="text-xs font-mono bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full">{stats.inDegree[node.id]}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Anomalies / Alerts */}
-            <div>
-              <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider mb-3 flex items-center">
-                <AlertTriangle className="w-3.5 h-3.5 mr-1.5 text-amber-500" /> Anomalies & Alerts
-              </h3>
-              <div className="space-y-2">
-                {stats.anomalies.length > 0 ? (
-                  <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 p-3 rounded-lg transition-colors">
-                    <div className="text-sm text-amber-700 dark:text-amber-400 font-medium mb-1">High Coupling Detected</div>
-                    <p className="text-xs text-amber-600 dark:text-amber-400/70">{stats.anomalies.length} files have &gt;10 dependencies.</p>
-                  </div>
-                ) : (
-                  <div className="text-xs text-zinc-500 italic">No highly coupled files detected.</div>
-                )}
-                
-                {stats.isolated.length > 0 && (
-                  <div className="bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-white/5 p-3 rounded-lg mt-2 transition-colors">
-                    <div className="text-sm text-zinc-700 dark:text-zinc-300 font-medium mb-1">Isolated Files</div>
-                    <p className="text-xs text-zinc-500">{stats.isolated.length} files have no imports or dependents.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="absolute top-20 left-4 z-10 flex flex-col items-start">
       </div>
 
       {/* Top Right: Layout Controls */}
       <div className="absolute top-4 right-4 flex flex-col space-y-2 z-10">
         <div className="bg-white/90 dark:bg-[#1e1e1e]/90 backdrop-blur-md border border-zinc-200 dark:border-white/10 rounded-lg shadow-lg p-1 flex flex-col space-y-1 mt-2 transition-colors">
           <button 
-            onClick={() => fgRef.current?.zoomToFit(800, 50)}
+            onClick={() => {
+              if (chartRef.current) {
+                chartRef.current.zoomToFit(400);
+              }
+            }}
             className="p-2 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 rounded-md transition-colors"
             title="Fit to screen"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
-            </svg>
-          </button>
-          <button 
-            onClick={() => fgRef.current?.d3ReheatSimulation()}
-            className="p-2 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 rounded-md transition-colors"
-            title="Reheat simulation"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-              <path d="M3 3v5h5"/>
             </svg>
           </button>
         </div>
@@ -778,41 +566,74 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
           <button 
             onClick={() => handleExport('json')}
             className="p-2 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 rounded-md transition-colors flex flex-col items-center"
-            title="Export JSON"
+            title="Export as JSON"
+            disabled={isExporting}
           >
             <Download className="w-4 h-4 mb-1" />
             <span className="text-[9px] font-mono">JSON</span>
-          </button>
-          <button 
-            onClick={() => handleExport('graphml')}
-            className="p-2 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 rounded-md transition-colors flex flex-col items-center"
-            title="Export GraphML"
-          >
-            <Download className="w-4 h-4 mb-1" />
-            <span className="text-[9px] font-mono">GML</span>
           </button>
         </div>
       </div>
       
       {/* Bottom Left: Legend */}
-      <div className="absolute bottom-4 left-4 bg-white/90 dark:bg-[#1e1e1e]/90 backdrop-blur-md border border-zinc-200 dark:border-white/10 p-3 rounded-lg shadow-xl pointer-events-none z-10 transition-colors">
+      <div className="legend-container absolute bottom-4 left-4 bg-white/90 dark:bg-[#1e1e1e]/90 backdrop-blur-md border border-zinc-200 dark:border-white/10 p-3 rounded-lg shadow-xl pointer-events-none z-10 transition-colors">
         <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-2 uppercase tracking-wider">Node Types</h3>
         <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-          {[
-            { label: 'TypeScript', color: '#3178c6' },
-            { label: 'JavaScript', color: '#f7df1e' },
-            { label: 'Python', color: '#3572A5' },
-            { label: 'Styles', color: '#563d7c' },
-            { label: 'HTML', color: '#e34c26' },
-            { label: 'Markdown', color: '#083fa1' },
-          ].map(item => (
-            <div key={item.label} className="flex items-center space-x-2">
-              <div className="w-3 h-3 rounded-full border border-zinc-200 dark:border-white/20" style={{ backgroundColor: item.color, boxShadow: `0 0 8px ${item.color}` }}></div>
-              <span className="text-xs text-zinc-700 dark:text-zinc-300">{item.label}</span>
-            </div>
-          ))}
+          {Array.from(new Set(displayData.nodes.map(n => {
+            const type = n.type;
+            return type === 'ts' || type === 'tsx' ? 'TypeScript' :
+                   type === 'js' || type === 'jsx' ? 'JavaScript' :
+                   type === 'py' ? 'Python' :
+                   type === 'css' || type === 'scss' ? 'Styles' :
+                   type === 'html' ? 'HTML' :
+                   type === 'md' ? 'Markdown' :
+                   type === 'json' ? 'JSON' :
+                   type === 'folder' ? 'Folder' :
+                   type === 'commit' ? 'Commit' :
+                   type === 'contributor' ? 'Contributor' :
+                   type === 'repo' ? 'Repository' :
+                   type.toUpperCase();
+          }))).map(label => {
+            // Find a representative type for the color
+            const repType = label === 'TypeScript' ? 'ts' :
+                            label === 'JavaScript' ? 'js' :
+                            label === 'Python' ? 'py' :
+                            label === 'Styles' ? 'css' :
+                            label === 'HTML' ? 'html' :
+                            label === 'Markdown' ? 'md' :
+                            label === 'JSON' ? 'json' :
+                            label === 'Folder' ? 'folder' :
+                            label === 'Commit' ? 'commit' :
+                            label === 'Contributor' ? 'contributor' :
+                            label === 'Repository' ? 'repo' :
+                            label.toLowerCase();
+            const color = getNodeColor({ type: repType }).fill;
+            return (
+              <div key={label} className="flex items-center space-x-2">
+                <div className="w-3 h-3 rounded-full border border-zinc-200 dark:border-white/20" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }}></div>
+                <span className="text-xs text-zinc-700 dark:text-zinc-300">{label}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
+
+      {/* Link Tooltip */}
+      {hoverLink && (
+        <div 
+          ref={tooltipRef}
+          className="fixed z-50 px-3 py-2 bg-white/95 dark:bg-zinc-900/95 text-zinc-900 dark:text-white text-xs rounded-lg shadow-xl pointer-events-none backdrop-blur-sm border border-zinc-200 dark:border-white/10"
+          style={{ left: -1000, top: -1000 }}
+        >
+          <div className="font-medium mb-1 border-b border-zinc-200 dark:border-white/20 pb-1">Connection</div>
+          <div className="flex flex-col gap-1">
+            <span className="text-zinc-600 dark:text-zinc-300">From: <span className="text-zinc-900 dark:text-white font-mono">{typeof hoverLink.source === 'object' ? hoverLink.source.name : hoverLink.source}</span></span>
+            <span className="text-zinc-600 dark:text-zinc-300">To: <span className="text-zinc-900 dark:text-white font-mono">{typeof hoverLink.target === 'object' ? hoverLink.target.name : hoverLink.target}</span></span>
+            {hoverLink.type && <span className="text-indigo-600 dark:text-indigo-300 mt-1">Type: {hoverLink.type}</span>}
+            <span className="text-zinc-500 dark:text-zinc-400 italic mt-1 text-[10px]">Click to view import</span>
+          </div>
+        </div>
+      )}
 
       {/* Right Side: Node Details Panel (Living Document) */}
       {selectedNodeId && (
@@ -847,6 +668,15 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
                     {node.path}
                   </div>
                 </div>
+
+                {node.size !== undefined && (
+                  <div>
+                    <div className="text-xs text-zinc-500 mb-1">Size</div>
+                    <div className="text-sm text-zinc-900 dark:text-white">
+                      {node.size < 1024 ? `${node.size} B` : node.size < 1024 * 1024 ? `${(node.size / 1024).toFixed(1)} KB` : `${(node.size / (1024 * 1024)).toFixed(1)} MB`}
+                    </div>
+                  </div>
+                )}
 
                 {node.type !== 'commit' && node.type !== 'contributor' && node.type !== 'repo' && (
                   <>
@@ -891,10 +721,18 @@ export default function GraphView({ data, commits = [], contributors = [], onNod
                 )}
                 
                 {node.type === 'commit' && (
-                  <div>
-                    <div className="text-xs text-zinc-500 mb-1">Author</div>
-                    <div className="text-sm text-zinc-900 dark:text-white">{(node as any).author}</div>
-                  </div>
+                  <>
+                    <div>
+                      <div className="text-xs text-zinc-500 mb-1">Author</div>
+                      <div className="text-sm text-zinc-900 dark:text-white">{(node as any).author}</div>
+                    </div>
+                    {(node as any).date && (
+                      <div>
+                        <div className="text-xs text-zinc-500 mb-1">Date</div>
+                        <div className="text-sm text-zinc-900 dark:text-white">{new Date((node as any).date).toLocaleString()}</div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );

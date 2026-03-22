@@ -5,6 +5,7 @@ export interface FileNode {
   type: string;
   content?: string;
   val: number; // node size
+  size?: number; // file size in bytes
 }
 
 export interface FileLink {
@@ -158,7 +159,7 @@ export function parseDependencies(content: string, filePath: string, allFiles: s
   return [...new Set(dependencies)]; // Unique dependencies
 }
 
-export function buildGraphData(files: { path: string, content?: string }[]): GraphData {
+export function buildGraphData(files: { path: string, content?: string, size?: number }[]): GraphData {
   const nodes: FileNode[] = [];
   const links: FileLink[] = [];
   const allPaths = files.map(f => f.path);
@@ -180,6 +181,7 @@ export function buildGraphData(files: { path: string, content?: string }[]): Gra
       type: ext,
       content: file.content,
       val: lengthScore, // Initial size based on length
+      size: file.size,
     });
 
     inDegree[file.path] = 0;

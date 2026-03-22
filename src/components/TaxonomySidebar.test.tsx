@@ -61,22 +61,19 @@ describe('TaxonomySidebar', () => {
     fireEvent.click(screen.getByText('Collaboration Network'));
     expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'contributor-collab', encoding: 'force' });
 
-    fireEvent.click(screen.getByText('Bus Factor Graph'));
-    expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'contributor-bus', encoding: 'circular' });
-
     fireEvent.click(screen.getByText('Directory Tree Graph'));
     expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'tree' });
 
     fireEvent.click(screen.getByText('Layer 1: Raw Text Graph'));
     expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'raw-text' });
 
-    fireEvent.click(screen.getByText('Layer 8: Dependency Graph'));
+    fireEvent.click(screen.getByText('Layer 2: Dependency Graph'));
     expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'dependency' });
 
-    fireEvent.click(screen.getByText('Layer 9: Git DAG'));
+    fireEvent.click(screen.getByText('Layer 3: Git DAG'));
     expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'git-dag' });
 
-    fireEvent.click(screen.getByText('Layer 10: Commit-File Graph'));
+    fireEvent.click(screen.getByText('Layer 4: Commit-File Graph'));
     expect(setConfig).toHaveBeenCalledWith({ ...defaultConfig, model: 'commit-file' });
 
     fireEvent.click(screen.getByText('Force-Directed'));

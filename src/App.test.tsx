@@ -96,6 +96,6 @@ describe('App', () => {
     fireEvent.click(fileButton);
 
     // GraphView should not be visible
-    expect(screen.queryByText('Repo Insights')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('force-graph')).not.toBeInTheDocument();
   });
 });

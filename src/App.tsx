@@ -24,6 +24,8 @@ export default function App() {
     encoding: 'force'
   });
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [stats, setStats] = useState<any>(null);
+  const [highlightString, setHighlightString] = useState<string | null>(null);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -82,7 +84,7 @@ export default function App() {
 
       // Fetch contents in parallel (with a limit to avoid rate limits)
       const BATCH_SIZE = 10;
-      const filesWithContent: { path: string, content?: string }[] = [];
+      const filesWithContent: { path: string, content?: string, size?: number }[] = [];
       
       setProgress({ current: 0, total: codeFiles.length });
       
@@ -91,10 +93,10 @@ export default function App() {
         const promises = batch.map(async (file) => {
           try {
             const content = await fetchFileContent(owner, repo, file.path, defaultBranch, pat);
-            return { path: file.path, content };
+            return { path: file.path, content, size: file.size };
           } catch (e) {
             // Silently ignore fetch errors for individual files to prevent console spam
-            return { path: file.path };
+            return { path: file.path, size: file.size };
           }
         });
         const results = await Promise.all(promises);
@@ -253,22 +255,38 @@ export default function App() {
                     data={graphData} 
                     commits={commits}
                     contributors={contributors}
-                    onNodeClick={setSelectedNode} 
+                    onNodeClick={(node) => {
+                      setSelectedNode(node);
+                      setHighlightString(null);
+                    }} 
+                    onLinkClick={(link) => {
+                      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+                      const sourceNode = graphData.nodes.find(n => n.id === sourceId);
+                      const targetNode = graphData.nodes.find(n => n.id === targetId);
+                      if (sourceNode && targetNode) {
+                        setSelectedNode(sourceNode);
+                        const targetName = targetNode.name.split('.')[0];
+                        setHighlightString(targetName);
+                        setViewMode('split');
+                      }
+                    }}
                     selectedNodeId={selectedNode?.id} 
                     config={graphConfig}
                     theme={theme}
+                    onStatsChange={setStats}
                   />
                 </div>
               )}
               
               {viewMode !== 'graph' && (
                 <div className={`transition-all duration-300 h-full ${viewMode === 'file' ? 'w-full' : 'flex-1'}`}>
-                  <FileViewer file={selectedNode} theme={theme} />
+                  <FileViewer file={selectedNode} theme={theme} highlightString={highlightString} />
                 </div>
               )}
             </div>
             
-            <TaxonomySidebar config={graphConfig} setConfig={setGraphConfig} />
+            <TaxonomySidebar config={graphConfig} setConfig={setGraphConfig} stats={stats} />
           </>
         )}
       </main>

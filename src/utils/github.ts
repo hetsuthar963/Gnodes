@@ -4,6 +4,7 @@ export interface GitHubFile {
   sha: string;
   url: string;
   content?: string;
+  size?: number;
 }
 
 export interface RepoTree {
@@ -89,7 +90,8 @@ export async function fetchCommits(owner: string, repo: string, pat?: string): P
     if (res.status === 403 || res.status === 429) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
     throw new Error(`Failed to fetch commits: ${res.statusText}`);
   }
-  return await res.json();
+  const data = await res.json();
+  return data.reverse();
 }
 
 export async function fetchContributors(owner: string, repo: string, pat?: string): Promise<any[]> {

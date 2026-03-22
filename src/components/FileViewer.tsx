@@ -7,9 +7,10 @@ import { FileNode } from '../utils/parser';
 interface FileViewerProps {
   file: FileNode | null;
   theme?: 'dark' | 'light';
+  highlightString?: string | null;
 }
 
-export default function FileViewer({ file, theme = 'dark' }: FileViewerProps) {
+export default function FileViewer({ file, theme = 'dark', highlightString }: FileViewerProps) {
   if (!file) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-zinc-500 bg-zinc-100 dark:bg-zinc-900/50 rounded-xl border border-zinc-200 dark:border-white/5 transition-colors">
@@ -71,6 +72,13 @@ export default function FileViewer({ file, theme = 'dark' }: FileViewerProps) {
             }}
             showLineNumbers={true}
             wrapLines={true}
+            lineProps={(lineNumber) => {
+              const line = file.content?.split('\n')[lineNumber - 1] || '';
+              if (highlightString && line.includes(highlightString)) {
+                return { style: { display: 'block', backgroundColor: theme === 'dark' ? 'rgba(255, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.3)' } };
+              }
+              return {};
+            }}
           >
             {file.content || ''}
           </SyntaxHighlighter>
