@@ -1,10 +1,14 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
-
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Global utility overrides for speed and space utilization */
+* {
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -23,12 +27,4 @@
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(150, 150, 150, 0.5);
-}
-
-.dark .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
 }

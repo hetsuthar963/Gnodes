@@ -18,7 +18,7 @@ export interface GraphData {
   links: FileLink[];
 }
 
-export function parseDependencies(content: string, filePath: string, allFiles: string[]): string[] {
+export function parseDependencies(content: string, filePath: string, allFiles: string[], fileIndex?: Map<string, string[]>, allFilesSet?: Set<string>): string[] {
   const dependencies: string[] = [];
   const ext = filePath.split('.').pop()?.toLowerCase();
 
@@ -50,20 +50,20 @@ export function parseDependencies(content: string, filePath: string, allFiles: s
     // 1. Try exact match or exact match with extension
     for (const ext of extensions) {
       const p = resolvedPath + ext;
-      if (allFiles.includes(p)) {
+      if (allFilesSet ? allFilesSet.has(p) : allFiles.includes(p)) {
         dependencies.push(p);
         found = true;
         break;
       }
     }
 
-    // 2. If not found, try fuzzy matching (e.g., matching the end of the path)
-    // This helps with aliases like `components/Button` matching `src/components/Button.tsx`
-    if (!found) {
-      // Create a suffix to match against
-      const suffix = '/' + resolvedPath.replace(/^[@~]\//, '');
+    // 2. If not found, try fuzzy matching using pre-indexed file map
+    if (!found && fileIndex) {
+      const fileName = resolvedPath.split('/').pop() || '';
+      const candidates = fileIndex.get(fileName) || [];
       
-      for (const file of allFiles) {
+      for (const file of candidates) {
+        const suffix = '/' + resolvedPath.replace(/^[@~]\//, '');
         for (const ext of extensions) {
           if (file.endsWith(suffix + ext) || file === resolvedPath + ext) {
             dependencies.push(file);
@@ -163,6 +163,23 @@ export function buildGraphData(files: { path: string, content?: string, size?: n
   const nodes: FileNode[] = [];
   const links: FileLink[] = [];
   const allPaths = files.map(f => f.path);
+  const allPathsSet = new Set(allPaths);
+
+  // Pre-index files by their name for faster fuzzy matching
+  const fileIndex = new Map<string, string[]>();
+  for (const path of allPaths) {
+    const fileName = path.split('/').pop() || '';
+    // Also index without extension
+    const nameWithoutExt = fileName.split('.').slice(0, -1).join('.');
+    
+    if (!fileIndex.has(fileName)) fileIndex.set(fileName, []);
+    fileIndex.get(fileName)!.push(path);
+    
+    if (nameWithoutExt && nameWithoutExt !== fileName) {
+      if (!fileIndex.has(nameWithoutExt)) fileIndex.set(nameWithoutExt, []);
+      fileIndex.get(nameWithoutExt)!.push(path);
+    }
+  }
 
   const inDegree: Record<string, number> = {};
   const outDegree: Record<string, number> = {};
@@ -188,7 +205,7 @@ export function buildGraphData(files: { path: string, content?: string, size?: n
     outDegree[file.path] = 0;
 
     if (file.content) {
-      const deps = parseDependencies(file.content, file.path, allPaths);
+      const deps = parseDependencies(file.content, file.path, allPaths, fileIndex, allPathsSet);
       for (const dep of deps) {
         links.push({
           source: file.path,

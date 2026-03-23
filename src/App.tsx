@@ -23,17 +23,9 @@ export default function App() {
     metric: 'none',
     encoding: 'force'
   });
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [stats, setStats] = useState<any>(null);
   const [highlightString, setHighlightString] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const handleFetch = async () => {
     if (!repoUrl) return;
@@ -83,7 +75,7 @@ export default function App() {
       });
 
       // Fetch contents in parallel (with a limit to avoid rate limits)
-      const BATCH_SIZE = 10;
+      const BATCH_SIZE = 20;
       const filesWithContent: { path: string, content?: string, size?: number }[] = [];
       
       setProgress({ current: 0, total: codeFiles.length });
@@ -95,7 +87,6 @@ export default function App() {
             const content = await fetchFileContent(owner, repo, file.path, defaultBranch, pat);
             return { path: file.path, content, size: file.size };
           } catch (e) {
-            // Silently ignore fetch errors for individual files to prevent console spam
             return { path: file.path, size: file.size };
           }
         });
@@ -115,36 +106,36 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-50 dark:bg-[#0a0a0a] text-zinc-700 dark:text-zinc-300 font-sans overflow-hidden transition-colors">
+    <div className="flex flex-col h-screen bg-white text-zinc-700 font-sans overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-white dark:bg-[#121212] border-b border-zinc-200 dark:border-white/5 shadow-sm z-10 transition-colors">
+      <header className="flex items-center justify-between px-6 py-4 bg-white border-b border-zinc-200 shadow-sm z-10">
         <div className="flex items-center space-x-3">
           <div className="p-2 bg-indigo-500/10 rounded-lg">
-            <Github className="w-6 h-6 text-indigo-500 dark:text-indigo-400" />
+            <Github className="w-6 h-6 text-indigo-500" />
           </div>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">RepoGraph</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900">RepoGraph</h1>
         </div>
         
         <div className="flex items-center space-x-4 flex-1 max-w-3xl ml-8">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
             <input
               type="text"
               placeholder="https://github.com/owner/repo"
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-zinc-100 dark:bg-zinc-900/50 border border-zinc-200 dark:border-white/10 rounded-lg text-sm text-zinc-900 dark:text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+              className="w-full pl-10 pr-4 py-2 bg-zinc-100 border border-zinc-200 rounded-lg text-sm text-zinc-900 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
               onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
             />
           </div>
           <div className="relative w-64">
-            <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+            <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
             <input
               type="password"
               placeholder="Personal Access Token (Optional)"
               value={pat}
               onChange={(e) => setPat(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-zinc-100 dark:bg-zinc-900/50 border border-zinc-200 dark:border-white/10 rounded-lg text-sm text-zinc-900 dark:text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+              className="w-full pl-10 pr-4 py-2 bg-zinc-100 border border-zinc-200 rounded-lg text-sm text-zinc-900 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
               onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
             />
           </div>
@@ -159,33 +150,25 @@ export default function App() {
         </div>
         
         <div className="flex items-center space-x-4 ml-4">
-          <button
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="p-2 rounded-lg text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            title="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-
           {graphData && (
-            <div className="flex items-center space-x-2 bg-zinc-100 dark:bg-zinc-900/50 p-1 rounded-lg border border-zinc-200 dark:border-white/5">
+            <div className="flex items-center space-x-2 bg-zinc-100 p-1 rounded-lg border border-zinc-200">
               <button
                 onClick={() => setViewMode('graph')}
-                className={`p-2 rounded-md transition-colors ${viewMode === 'graph' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'graph' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                 title="Graph View"
               >
                 <Maximize2 className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setViewMode('split')}
-                className={`p-2 rounded-md transition-colors ${viewMode === 'split' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'split' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                 title="Split View"
               >
                 <Columns className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setViewMode('file')}
-                className={`p-2 rounded-md transition-colors ${viewMode === 'file' ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'}`}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'file' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
                 title="File View"
               >
                 <FileCode2 className="w-4 h-4" />
@@ -206,12 +189,12 @@ export default function App() {
 
         {!graphData && !loading && !error && (
           <div className="flex-1 flex flex-col items-center justify-center text-zinc-500">
-            <div className="w-24 h-24 mb-6 rounded-full bg-zinc-200 dark:bg-zinc-800/50 flex items-center justify-center border border-zinc-300 dark:border-white/5">
+            <div className="w-24 h-24 mb-6 rounded-full bg-zinc-200 flex items-center justify-center border border-zinc-300">
               <Github className="w-10 h-10 opacity-50" />
             </div>
-            <h2 className="text-xl font-medium text-zinc-900 dark:text-zinc-300 mb-2">Enter a GitHub repository URL</h2>
+            <h2 className="text-xl font-medium text-zinc-900 mb-2">Enter a GitHub repository URL</h2>
             <p className="max-w-md text-center text-sm leading-relaxed">
-              RepoGraph will clone the repository, parse the code files, and generate an interactive dependency graph similar to Obsidian.
+              RepoGraph will clone the repository, parse the code files, and generate an interactive dependency graph.
             </p>
           </div>
         )}
@@ -222,11 +205,11 @@ export default function App() {
             <p className="text-sm font-medium animate-pulse">Cloning and analyzing repository...</p>
             {progress && (
               <div className="mt-6 w-64">
-                <div className="flex justify-between text-xs mb-1 text-zinc-500 dark:text-zinc-400">
+                <div className="flex justify-between text-xs mb-1 text-zinc-500">
                   <span>Fetching files</span>
                   <span>{progress.current} / {progress.total}</span>
                 </div>
-                <div className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-zinc-200 rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-indigo-500 transition-all duration-300 ease-out"
                     style={{ width: `${(progress.current / progress.total) * 100}%` }}
@@ -244,20 +227,26 @@ export default function App() {
               <Sidebar 
                 files={graphData.nodes} 
                 onFileSelect={setSelectedNode} 
-                selectedFileId={selectedNode?.id} 
+                selectedFileId={selectedNode?.id}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
               />
             )}
             
-            <div className="flex-1 flex p-4 gap-4 overflow-hidden bg-zinc-50 dark:bg-[#0a0a0a] transition-colors">
+            <div className={`flex-1 flex overflow-hidden bg-white ${viewMode === 'graph' ? 'p-0 gap-0' : 'p-4 gap-4'}`}>
               {viewMode !== 'file' && (
-                <div className={`transition-all duration-300 h-full ${viewMode === 'graph' ? 'w-full' : 'flex-1'}`}>
+                <div className="transition-all duration-300 h-full flex-1 min-w-0">
                   <GraphView 
                     data={graphData} 
                     commits={commits}
                     contributors={contributors}
+                    searchQuery={searchQuery}
                     onNodeClick={(node) => {
                       setSelectedNode(node);
                       setHighlightString(null);
+                      if (node) {
+                        setViewMode('split');
+                      }
                     }} 
                     onLinkClick={(link) => {
                       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
@@ -273,15 +262,15 @@ export default function App() {
                     }}
                     selectedNodeId={selectedNode?.id} 
                     config={graphConfig}
-                    theme={theme}
                     onStatsChange={setStats}
+                    viewMode={viewMode}
                   />
                 </div>
               )}
               
               {viewMode !== 'graph' && (
-                <div className={`transition-all duration-300 h-full ${viewMode === 'file' ? 'w-full' : 'flex-1'}`}>
-                  <FileViewer file={selectedNode} theme={theme} highlightString={highlightString} />
+                <div className="transition-all duration-300 h-full flex-1 min-w-0">
+                  <FileViewer file={selectedNode} highlightString={highlightString} stats={stats} />
                 </div>
               )}
             </div>

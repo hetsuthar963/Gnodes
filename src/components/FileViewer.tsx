@@ -1,19 +1,41 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactMarkdown from 'react-markdown';
 import { FileNode } from '../utils/parser';
+import { Sparkles, BrainCircuit, Info } from 'lucide-react';
+import { clsx } from 'clsx';
+import { askAI } from '../services/geminiService';
 
 interface FileViewerProps {
   file: FileNode | null;
-  theme?: 'dark' | 'light';
   highlightString?: string | null;
+  stats?: any;
 }
 
-export default function FileViewer({ file, theme = 'dark', highlightString }: FileViewerProps) {
+export default function FileViewer({ file, highlightString, stats }: FileViewerProps) {
+  const [useThinking, setUseThinking] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResponse, setAiResponse] = useState<string | null>(null);
+
+  const handleAskAI = async () => {
+    if (!file || !file.content) return;
+    setAiLoading(true);
+    setAiResponse(null);
+    try {
+      const response = await askAI(file.content, "Summarize this file and explain its purpose.", useThinking);
+      setAiResponse(response);
+    } catch (err) {
+      console.error(err);
+      setAiResponse('Failed to get AI response.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   if (!file) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-zinc-500 bg-zinc-100 dark:bg-zinc-900/50 rounded-xl border border-zinc-200 dark:border-white/5 transition-colors">
+      <div className="flex flex-col items-center justify-center h-full text-zinc-500 bg-zinc-100 rounded-xl border border-zinc-200 transition-colors">
         <svg className="w-16 h-16 mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
@@ -24,8 +46,7 @@ export default function FileViewer({ file, theme = 'dark', highlightString }: Fi
 
   const isMarkdown = file.type === 'md';
 
-  const baseStyle = theme === 'dark' ? vscDarkPlus : vs;
-  const customSyntaxStyle = { ...baseStyle };
+  const customSyntaxStyle = { ...vs };
   
   // Remove background properties from the pre tag style to avoid React warnings
   // about mixing shorthand and non-shorthand properties
@@ -46,43 +67,121 @@ export default function FileViewer({ file, theme = 'dark', highlightString }: Fi
   }
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-[#1e1e1e] rounded-xl border border-zinc-200 dark:border-white/10 shadow-lg overflow-hidden transition-colors">
-      <div className="flex items-center px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50 border-b border-zinc-200 dark:border-white/10 transition-colors">
-        <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
-        <div className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></div>
-        <div className="w-3 h-3 rounded-full bg-green-500 mr-4"></div>
-        <span className="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate">{file.path}</span>
-      </div>
-      
-      <div className="flex-1 overflow-auto p-4 custom-scrollbar">
-        {isMarkdown ? (
-          <div className="prose dark:prose-invert prose-sm max-w-none">
-            <ReactMarkdown>{file.content || ''}</ReactMarkdown>
+    <div className="flex h-full bg-white border border-zinc-200 overflow-hidden transition-colors">
+      <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex items-center justify-between px-4 py-3 bg-zinc-50 border-b border-zinc-200 transition-colors">
+          <div className="flex items-center min-w-0">
+            <div className="w-3 h-3 rounded-full bg-red-500 mr-2 shrink-0"></div>
+            <div className="w-3 h-3 rounded-full bg-yellow-500 mr-2 shrink-0"></div>
+            <div className="w-3 h-3 rounded-full bg-green-500 mr-4 shrink-0"></div>
+            <span className="text-sm font-semibold text-zinc-900 truncate">{file.name}</span>
+            <span className="text-sm text-zinc-500 ml-2 truncate hidden sm:block">{file.path}</span>
           </div>
-        ) : (
-          <SyntaxHighlighter
-            language={file.type}
-            style={customSyntaxStyle}
-            customStyle={{
-              margin: 0,
-              padding: 0,
-              backgroundColor: 'transparent',
-              fontSize: '13px',
-              lineHeight: '1.5',
-            }}
-            showLineNumbers={true}
-            wrapLines={true}
-            lineProps={(lineNumber) => {
-              const line = file.content?.split('\n')[lineNumber - 1] || '';
-              if (highlightString && line.includes(highlightString)) {
-                return { style: { display: 'block', backgroundColor: theme === 'dark' ? 'rgba(255, 255, 0, 0.2)' : 'rgba(255, 255, 0, 0.3)' } };
-              }
-              return {};
-            }}
-          >
-            {file.content || ''}
-          </SyntaxHighlighter>
-        )}
+          {file.size !== undefined && file.type !== 'commit' && file.type !== 'contributor' && (
+            <span className="text-xs text-zinc-500 font-mono shrink-0 ml-4">
+              {file.size < 1024 ? `${file.size} B` : file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`}
+            </span>
+          )}
+        </div>
+
+        {/* Details and AI Bar */}
+        <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-zinc-200 text-sm">
+          <div className="flex items-center gap-4">
+            {file.type === 'commit' && (
+              <>
+                <div className="flex items-center gap-1">
+                  <span className="text-zinc-500">Author:</span>
+                  <span className="font-medium text-zinc-900">{(file as any).author}</span>
+                </div>
+                {(file as any).date && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-zinc-500">Date:</span>
+                    <span className="font-medium text-zinc-900">{new Date((file as any).date).toLocaleString()}</span>
+                  </div>
+                )}
+              </>
+            )}
+            {stats && file.type !== 'commit' && file.type !== 'contributor' && file.type !== 'repo' && (
+              <>
+                <div className="flex items-center gap-1">
+                  <span className="text-zinc-500">Imported By:</span>
+                  <span className="font-medium text-zinc-900">{stats.inDegree?.[file.id] || 0}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-zinc-500">Dependencies:</span>
+                  <span className="font-medium text-zinc-900">{stats.outDegree?.[file.id] || 0}</span>
+                </div>
+              </>
+            )}
+          </div>
+          
+          {file.content && (
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className={clsx("w-4 h-4", useThinking ? "text-amber-500" : "text-zinc-400")} />
+                <button 
+                  onClick={() => setUseThinking(!useThinking)}
+                  className={clsx(
+                    "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none",
+                    useThinking ? "bg-amber-500" : "bg-zinc-300"
+                  )}
+                >
+                  <span className={clsx(
+                    "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
+                    useThinking ? "translate-x-5" : "translate-x-1"
+                  )} />
+                </button>
+              </div>
+              <button
+                onClick={handleAskAI}
+                disabled={aiLoading}
+                className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                <BrainCircuit className="w-3 h-3" />
+                {aiLoading ? 'Analyzing...' : 'Ask AI'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-zinc-950">
+          {isMarkdown ? (
+            <div className="prose prose-sm max-w-none prose-invert">
+              <ReactMarkdown>{file.content || ''}</ReactMarkdown>
+            </div>
+          ) : (
+            <SyntaxHighlighter
+              language={file.type}
+              style={vscDarkPlus}
+              customStyle={{
+                margin: 0,
+                padding: 0,
+                backgroundColor: 'transparent',
+                fontSize: '14px',
+                lineHeight: '1.6',
+              }}
+              showLineNumbers={true}
+              wrapLines={true}
+              lineProps={(lineNumber) => {
+                const line = file.content?.split('\n')[lineNumber - 1] || '';
+                if (highlightString && line.includes(highlightString)) {
+                  return { style: { display: 'block', backgroundColor: 'rgba(255, 255, 255, 0.1)' } };
+                }
+                return {};
+              }}
+            >
+              {file.content || ''}
+            </SyntaxHighlighter>
+          )}
+          
+          {aiResponse && (
+            <div className="text-xs text-zinc-700 bg-white p-4 border border-zinc-200 mt-4 leading-relaxed">
+              <div className="prose prose-sm max-w-none">
+                <ReactMarkdown>{aiResponse}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

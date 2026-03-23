@@ -5,7 +5,7 @@ import FileViewer from './FileViewer';
 
 describe('FileViewer', () => {
   it('renders placeholder when no file is selected', () => {
-    render(<FileViewer file={null} theme="light" />);
+    render(<FileViewer file={null} />);
     expect(screen.getByText('Select a file to view its contents')).toBeInTheDocument();
   });
 
@@ -19,8 +19,8 @@ describe('FileViewer', () => {
       val: 1
     };
 
-    render(<FileViewer file={mockFile} theme="light" />);
-    expect(screen.getByText('src/index.ts')).toBeInTheDocument();
+    render(<FileViewer file={mockFile} />);
+    expect(screen.getAllByText('src/index.ts').length).toBeGreaterThan(0);
     expect(screen.getByText('console.log("hello");')).toBeInTheDocument();
   });
 });
