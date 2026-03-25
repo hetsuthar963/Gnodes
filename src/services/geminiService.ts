@@ -34,3 +34,31 @@ ${question}
 
   return response.text || '';
 }
+
+export async function askGlobalAI(
+  repoSummary: string,
+  question: string
+): Promise<string> {
+  const prompt = `
+You are an expert software architect.
+Analyze the following repository summary and answer the user's question.
+The summary includes file paths, dependencies, and key metrics.
+
+Repository Summary:
+${repoSummary}
+
+Question:
+${question}
+`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.1-pro-preview",
+    contents: prompt,
+    config: {
+      systemInstruction: "You are an expert software architect. Provide high-level structural analysis and clear answers.",
+      thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }
+    },
+  });
+
+  return response.text || '';
+}

@@ -3,12 +3,12 @@ import ForceGraph2D from 'react-force-graph-2d';
 import { forceCollide, forceX, forceY, forceRadial, forceManyBody, forceLink } from 'd3-force';
 import { toPng, toSvg } from 'html-to-image';
 import { GraphData, FileNode } from '../utils/parser';
-import { Search, BarChart2, AlertTriangle, X, Target, FileText, Download, BrainCircuit, Map as MapIcon, Compass, Sparkles } from 'lucide-react';
+import { Search, BarChart2, AlertTriangle, X, Target, FileText, Download, Map as MapIcon, Compass, Info } from 'lucide-react';
 import { clsx } from 'clsx';
 import FileViewer from './FileViewer';
 import { GraphConfig } from './TaxonomySidebar';
-import { askAI } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
+import D3HierarchicalView from './D3HierarchicalView';
 
 // MiniMap Component
 const MiniMap = ({ data, dimensions, transform, onNavigate, engineTick }: { data: any, dimensions: { width: number, height: number }, transform: { x: number, y: number, k: number }, onNavigate: (x: number, y: number) => void, engineTick: number }) => {
@@ -134,6 +134,7 @@ const MiniMap = ({ data, dimensions, transform, onNavigate, engineTick }: { data
  </svg>
  <div className="absolute top-1 left-2 text-[8px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-1 pointer-events-none">
  <MapIcon size={8} />
+ <span>Map</span>
  </div>
  <div className="absolute bottom-1 left-2 text-[7px] text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
  Click to navigate
@@ -182,10 +183,42 @@ interface GraphViewProps {
  onStatsChange?: (stats: any) => void;
  selectedNodeId?: string;
  config: GraphConfig;
+ onConfigChange?: (config: GraphConfig) => void;
  viewMode?: 'split' | 'graph' | 'file';
 }
 
-export default function GraphView({ data, commits = [], contributors = [], searchQuery = '', onNodeClick, onLinkClick, onStatsChange, selectedNodeId, config, viewMode = 'graph' }: GraphViewProps) {
+export default function GraphView({ data, commits = [], contributors = [], searchQuery = '', onNodeClick, onLinkClick, onStatsChange, selectedNodeId, config, onConfigChange, viewMode = 'graph' }: GraphViewProps) {
+  const [cycles, setCycles] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState<any>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [showLegend, setShowLegend] = useState(true);
+
+  useEffect(() => {
+    const worker = new Worker(new URL('../workers/data.worker.ts', import.meta.url), { type: 'module' });
+    
+    setIsProcessing(true);
+    worker.postMessage({ data, config, commits, contributors });
+
+    worker.onmessage = (e) => {
+      if (e.data.type === 'ERROR') {
+        console.error('Worker error in GraphView:', e.data.payload);
+        setIsProcessing(false);
+        return;
+      }
+
+      const { displayData: computedData, degrees, cycles: computedCycles } = e.data;
+      // We can't easily update displayData if it's a useMemo, 
+      // so we might need to change how displayData is handled.
+      setCycles(computedCycles || []);
+      // For now, let's just update the stats
+      if (onStatsChange && degrees && computedCycles) {
+        onStatsChange({ inDegree: degrees, outDegree: degrees, cycles: computedCycles });
+      }
+      setIsProcessing(false);
+    };
+
+    return () => worker.terminate();
+  }, [data, config, commits, contributors, onStatsChange]);
  const [hoverNode, setHoverNode] = useState<FileNode | null>(null);
  const [hoverLink, setHoverLink] = useState<any | null>(null);
  
@@ -442,19 +475,13 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  fg.d3Force('charge', forceManyBody().strength(-800).distanceMax(1000));
  
  fg.d3Force('link', forceLink().distance((link: any) => {
- const sourceR = config.metric === 'centrality' 
- ? 2 + Math.sqrt(degrees.get(link.source.id || link.source) || 0)
- : (link.source.val || 1);
- const targetR = config.metric === 'centrality' 
- ? 2 + Math.sqrt(degrees.get(link.target.id || link.target) || 0)
- : (link.target.val || 1);
+ const sourceR = getNodeSize(link.source);
+ const targetR = getNodeSize(link.target);
  return 60 + sourceR + targetR;
  }).strength(0.5));
  
  fg.d3Force('collide', forceCollide().radius((node: any) => {
- const r = config.metric === 'centrality' 
- ? 2 + Math.sqrt(degrees.get(node.id) || 0)
- : (node.val || 1);
+ const r = getNodeSize(node);
  return r + 25; // Extra padding for labels and borders
  }).iterations(3));
 
@@ -490,9 +517,48 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  return map;
  }, [displayData.nodes]);
 
+ const getNodeSize = useCallback((node: any) => {
+  const val = node.val || 1;
+  if (config.metric === 'centrality') {
+   return 2 + Math.sqrt(degrees.get(node.id) || 0);
+  }
+  if (config.metric === 'physics-state') {
+   return 2 + Math.sqrt(node.physics?.state_management || 0) * 2;
+  }
+  if (config.metric === 'physics-effects') {
+   return 2 + Math.sqrt(node.physics?.side_effects || 0) * 2;
+  }
+  if (config.metric === 'physics-data') {
+   return 2 + Math.sqrt(node.physics?.data_flow || 0) * 2;
+  }
+  if (config.metric === 'physics-comp') {
+   return 2 + Math.sqrt(node.physics?.computation || 0) * 2;
+  }
+  if (config.metric === 'physics-complexity') {
+   return 2 + Math.sqrt(node.metrics?.complexity || 0) * 2;
+  }
+  return val;
+ }, [config.metric, degrees]);
+
  const getNodeColor = useCallback((node: any) => {
- switch (node.type) {
- case 'ts': case 'tsx': return { fill: '#3178c6', border: '#1e4b82' }; // TypeScript Blue
+  if (config.metric.startsWith('physics-')) {
+   const size = getNodeSize(node);
+   if (size > 2) {
+    if (config.metric === 'physics-state') return { fill: '#ec4899', border: '#be185d' };
+    if (config.metric === 'physics-effects') return { fill: '#f59e0b', border: '#b45309' };
+    if (config.metric === 'physics-data') return { fill: '#10b981', border: '#047857' };
+    if (config.metric === 'physics-comp') return { fill: '#6366f1', border: '#4338ca' };
+   }
+   return { fill: '#e2e8f0', border: '#94a3b8' };
+  }
+
+  switch (node.type) {
+   case 'yml': case 'yaml': return { fill: '#cb171e', border: '#8a1015' }; // YML Red
+  case 'yml': case 'yaml': return { fill: '#cb171e', border: '#8a1015' }; // YML Red
+  case 'cpp': case 'cc': case 'cxx': return { fill: '#f34b7d', border: '#a93457' }; // CPP Pink
+  case 'c': return { fill: '#555555', border: '#333333' }; // C Gray
+  case 'java': return { fill: '#b07219', border: '#7a4f11' }; // Java Brown
+  case 'ts': case 'tsx': return { fill: '#3178c6', border: '#1e4b82' }; // TypeScript Blue
  case 'js': case 'jsx': return { fill: '#f7df1e', border: '#a19100' }; // JS Yellow
  case 'py': return { fill: '#3572A5', border: '#1e4262' }; // Python Blue
  case 'css': case 'scss': return { fill: '#563d7c', border: '#312346' }; // CSS Purple
@@ -505,7 +571,7 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  case 'repo': return { fill: '#f43f5e', border: '#be123c' }; // Repo Rose
  default: return { fill: '#94a3b8', border: '#475569' }; // Default Slate
  }
- }, []);
+ }, [config.metric, getNodeSize]);
 
  // Calculate In-Depth Repo Stats
  const stats = useMemo(() => {
@@ -534,9 +600,10 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  anomalies,
  isolated,
  inDegree,
- outDegree
+ outDegree,
+ cycles
  };
- }, [displayData]);
+ }, [displayData, cycles]);
 
  useEffect(() => {
  if (onStatsChange) {
@@ -616,6 +683,7 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  }, [searchQuery, displayData]);
 
  const getDagMode = () => {
+ if (cycles && cycles.length > 0) return undefined;
  if (config.encoding === 'dag-td') return 'td';
  if (config.encoding === 'dag-lr') return 'lr';
  if (config.encoding === 'radial') return 'radialout';
@@ -630,25 +698,25 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  viewMode !== 'graph' && "rounded-xl border border-zinc-200 shadow-lg"
  )}
  >
- {dimensions.width > 0 && dimensions.height > 0 && (
+ {['tree-of-life', 'collapsible-tree'].includes(config.model) ? (
+ <D3HierarchicalView 
+ data={data} 
+ type={config.model as any} 
+ onNodeClick={onNodeClick}
+ onClose={() => onConfigChange?.({ ...config, model: 'tree' })} 
+ />
+ ) : (
+ dimensions.width > 0 && dimensions.height > 0 && (
  <ForceGraph2D
  ref={chartRef}
  graphData={displayData}
  width={dimensions.width}
  height={dimensions.height}
- onZoom={(t) => {
- requestAnimationFrame(() => setTransform(t));
- }}
  onZoomEnd={(t) => {
  requestAnimationFrame(() => setTransform(t));
  }}
- onEngineTick={() => {
- tickRef.current += 1;
- if (tickRef.current % 5 === 0) {
- setEngineTick(tickRef.current);
- }
- }}
  onEngineStop={() => {
+ setEngineTick(Date.now());
  if (!hasInitialZoomed.current && chartRef.current) {
  chartRef.current.zoomToFit(400, 50);
  hasInitialZoomed.current = true;
@@ -660,12 +728,7 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  dagLevelDistance={50}
  nodeColor={(node: any) => getNodeColor(node).fill}
  nodeRelSize={6}
- nodeVal={(node: any) => {
- const val = node.val || 1;
- return config.metric === 'centrality' 
- ? 1 + Math.sqrt(degrees.get(node.id) || 0)
- : val;
- }}
+ nodeVal={(node: any) => getNodeSize(node)}
  linkColor={(link: any) => {
  const isHighlighted = highlightLinks.has(link);
  const isDimmed = highlightNodes.size > 0 && !isHighlighted;
@@ -710,10 +773,7 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  ctx.textAlign = 'center';
  ctx.textBaseline = 'middle';
  
- const val = node.val || 1;
- const r = config.metric === 'centrality' 
- ? 2 + Math.sqrt(degrees.get(node.id) || 0)
- : val;
+ const r = getNodeSize(node);
 
  if (node.type === 'contributor' && node.avatar) {
  if (!node.img) {
@@ -815,7 +875,7 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  ctx.fillText(label, node.x, labelY);
  }
  }}
- />)}
+ />))}
  
  {/* Top Left: Breadcrumbs */}
  <div className="absolute top-4 left-4 flex flex-col gap-2 z-10">
@@ -843,14 +903,14 @@ export default function GraphView({ data, commits = [], contributors = [], searc
 
  {/* Top Right: Layout Controls */}
  <div className="absolute top-4 right-4 flex flex-col space-y-2 z-10">
- <div className="bg-white/90 -[#1e1e1e]/90 backdrop-blur-md border border-zinc-200 rounded-lg shadow-lg p-1 flex flex-col space-y-1 mt-2 transition-colors">
+ <div className="bg-white/90 backdrop-blur-md border border-zinc-200 rounded-lg shadow-lg p-1 flex flex-col space-y-1 mt-2 transition-colors">
  <button 
  onClick={() => {
  if (chartRef.current) {
  chartRef.current.zoomToFit(400);
  }
  }}
- className="p-2 text-zinc-500 hover:text-zinc-900 :text-white hover:bg-zinc-100 :bg-white/5 rounded-md transition-colors"
+ className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors"
  title="Fit to screen"
  >
  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -859,10 +919,10 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  </button>
  </div>
 
- <div className="bg-white/90 -[#1e1e1e]/90 backdrop-blur-md border border-zinc-200 rounded-lg shadow-lg p-1 flex flex-col space-y-1 mt-2 transition-colors">
+ <div className="bg-white/90 backdrop-blur-md border border-zinc-200 rounded-lg shadow-lg p-1 flex flex-col space-y-1 mt-2 transition-colors">
  <button 
  onClick={() => handleExport('json')}
- className="p-2 text-zinc-500 hover:text-zinc-900 :text-white hover:bg-zinc-100 :bg-white/5 rounded-md transition-colors flex flex-col items-center"
+ className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition-colors flex flex-col items-center"
  title="Export as JSON"
  disabled={isExporting}
  >
@@ -873,9 +933,14 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  </div>
  
  {/* Bottom Left: Legend */}
- <div className="legend-container absolute bottom-4 left-4 bg-white/90 -[#1e1e1e]/90 backdrop-blur-md border border-zinc-200 p-3 rounded-lg shadow-xl pointer-events-none z-10 transition-colors">
- <h3 className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Node Types</h3>
- <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+ <div className={clsx("legend-container absolute bottom-4 left-4 bg-white/90 backdrop-blur-md border border-zinc-200 p-3 rounded-lg shadow-xl pointer-events-auto z-10 transition-all", !showLegend && "p-2")}>
+    <button onClick={() => setShowLegend(!showLegend)} className="absolute -top-2 -right-2 bg-zinc-200 text-zinc-600 hover:bg-zinc-300 hover:text-zinc-900 rounded-full p-1 z-20 transition-colors shadow-sm">
+       {showLegend ? <X size={12} /> : <Info size={12} />}
+    </button>
+    {showLegend && (
+      <>
+        <h3 className="text-xs font-semibold text-zinc-500 mb-3 uppercase tracking-wider sticky top-0 bg-white/90 backdrop-blur-md py-1 border-b border-zinc-100">Node Types</h3>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 max-h-48 overflow-y-auto pr-2">
  {Array.from(new Set(displayData.nodes.map(n => {
  const type = n.type;
  return type === 'ts' || type === 'tsx' ? 'TypeScript' :
@@ -913,6 +978,8 @@ export default function GraphView({ data, commits = [], contributors = [], searc
  );
  })}
  </div>
+ </>
+ )}
  </div>
 
  {/* Link Tooltip */}

@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactMarkdown from 'react-markdown';
 import { FileNode } from '../utils/parser';
-import { Sparkles, BrainCircuit, Info } from 'lucide-react';
+import { Info } from 'lucide-react';
 import { clsx } from 'clsx';
-import { askAI } from '../services/geminiService';
 
 interface FileViewerProps {
   file: FileNode | null;
@@ -14,25 +13,6 @@ interface FileViewerProps {
 }
 
 export default function FileViewer({ file, highlightString, stats }: FileViewerProps) {
-  const [useThinking, setUseThinking] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState<string | null>(null);
-
-  const handleAskAI = async () => {
-    if (!file || !file.content) return;
-    setAiLoading(true);
-    setAiResponse(null);
-    try {
-      const response = await askAI(file.content, "Summarize this file and explain its purpose.", useThinking);
-      setAiResponse(response);
-    } catch (err) {
-      console.error(err);
-      setAiResponse('Failed to get AI response.');
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
   if (!file) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-zinc-500 bg-zinc-100 rounded-xl border border-zinc-200 transition-colors">
@@ -113,46 +93,38 @@ export default function FileViewer({ file, highlightString, stats }: FileViewerP
                 </div>
               </>
             )}
-          </div>
-          
-          {file.content && (
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Sparkles className={clsx("w-4 h-4", useThinking ? "text-amber-500" : "text-zinc-400")} />
-                <button 
-                  onClick={() => setUseThinking(!useThinking)}
-                  className={clsx(
-                    "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none",
-                    useThinking ? "bg-amber-500" : "bg-zinc-300"
-                  )}
-                >
-                  <span className={clsx(
-                    "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
-                    useThinking ? "translate-x-5" : "translate-x-1"
-                  )} />
-                </button>
+            {file.physics && (
+              <div className="flex items-center gap-3 ml-4 border-l border-zinc-200 pl-4">
+                <div className="flex items-center gap-1" title="State Management">
+                  <span className="text-zinc-500">State:</span>
+                  <span className="font-medium text-zinc-900">{file.physics.state_management}</span>
+                </div>
+                <div className="flex items-center gap-1" title="Side Effects">
+                  <span className="text-zinc-500">Effects:</span>
+                  <span className="font-medium text-zinc-900">{file.physics.side_effects}</span>
+                </div>
+                <div className="flex items-center gap-1" title="Data Flow">
+                  <span className="text-zinc-500">Data:</span>
+                  <span className="font-medium text-zinc-900">{file.physics.data_flow}</span>
+                </div>
+                <div className="flex items-center gap-1" title="Computation">
+                  <span className="text-zinc-500">Comp:</span>
+                  <span className="font-medium text-zinc-900">{file.physics.computation}</span>
+                </div>
               </div>
-              <button
-                onClick={handleAskAI}
-                disabled={aiLoading}
-                className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-50"
-              >
-                <BrainCircuit className="w-3 h-3" />
-                {aiLoading ? 'Analyzing...' : 'Ask AI'}
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-zinc-950">
+        <div className="flex-1 overflow-auto p-4 custom-scrollbar bg-white">
           {isMarkdown ? (
-            <div className="prose prose-sm max-w-none prose-invert">
+            <div className="prose prose-sm max-w-none">
               <ReactMarkdown>{file.content || ''}</ReactMarkdown>
             </div>
           ) : (
             <SyntaxHighlighter
               language={file.type}
-              style={vscDarkPlus}
+              style={vs}
               customStyle={{
                 margin: 0,
                 padding: 0,
@@ -165,21 +137,13 @@ export default function FileViewer({ file, highlightString, stats }: FileViewerP
               lineProps={(lineNumber) => {
                 const line = file.content?.split('\n')[lineNumber - 1] || '';
                 if (highlightString && line.includes(highlightString)) {
-                  return { style: { display: 'block', backgroundColor: 'rgba(255, 255, 255, 0.1)' } };
+                  return { style: { display: 'block', backgroundColor: 'rgba(0, 0, 0, 0.1)' } };
                 }
                 return {};
               }}
             >
               {file.content || ''}
             </SyntaxHighlighter>
-          )}
-          
-          {aiResponse && (
-            <div className="text-xs text-zinc-700 bg-white p-4 border border-zinc-200 mt-4 leading-relaxed">
-              <div className="prose prose-sm max-w-none">
-                <ReactMarkdown>{aiResponse}</ReactMarkdown>
-              </div>
-            </div>
           )}
         </div>
       </div>

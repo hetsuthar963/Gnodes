@@ -1,23 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import DataWorker from './workers/data.worker?worker';
 import { fetchRepoTree, fetchFileContent, GitHubFile } from './utils/github';
 import { buildGraphData, GraphData, FileNode } from './utils/parser';
 import GraphView from './components/GraphView';
 import FileViewer from './components/FileViewer';
-import Sidebar from './components/Sidebar';
-import TaxonomySidebar, { GraphConfig } from './components/TaxonomySidebar';
-import { Github, Key, Search, Loader2, AlertCircle, Columns, Maximize2, FileCode2, Sun, Moon } from 'lucide-react';
+import { GraphConfig } from './components/TaxonomySidebar';
+import AIAssistant from './components/AIAssistant';
+import { Github, Key, Search, Loader2, AlertCircle, Columns, Maximize2, FileCode2, Sparkles } from 'lucide-react';
 
 export default function App() {
   const [repoUrl, setRepoUrl] = useState('');
   const [pat, setPat] = useState('');
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ current: number; total: number; status?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [commits, setCommits] = useState<any[]>([]);
   const [contributors, setContributors] = useState<any[]>([]);
   const [selectedNode, setSelectedNode] = useState<FileNode | null>(null);
-  const [viewMode, setViewMode] = useState<'split' | 'graph' | 'file'>('graph');
+  const [viewMode, setViewMode] = useState<'split' | 'graph' | 'file' | 'chat'>('graph');
   const [graphConfig, setGraphConfig] = useState<GraphConfig>({
     model: 'dependency',
     metric: 'none',
@@ -26,6 +27,38 @@ export default function App() {
   const [stats, setStats] = useState<any>(null);
   const [highlightString, setHighlightString] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  const workerRef = useRef<Worker | null>(null);
+
+  useEffect(() => {
+    const worker = new DataWorker();
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+    };
+  }, []);
+
+  const buildGraphDataAsync = (files: any[]): Promise<GraphData> => {
+    return new Promise((resolve, reject) => {
+      if (!workerRef.current) {
+        resolve(buildGraphData(files));
+        return;
+      }
+      
+      const handleMessage = (e: MessageEvent) => {
+        if (e.data.type === 'GRAPH_BUILT') {
+          workerRef.current?.removeEventListener('message', handleMessage);
+          resolve(e.data.payload);
+        } else if (e.data.type === 'ERROR') {
+          workerRef.current?.removeEventListener('message', handleMessage);
+          reject(new Error(e.data.payload));
+        }
+      };
+      
+      workerRef.current.addEventListener('message', handleMessage);
+      workerRef.current.postMessage({ type: 'BUILD_GRAPH', payload: files });
+    });
+  };
 
   const handleFetch = async () => {
     if (!repoUrl) return;
@@ -67,20 +100,46 @@ export default function App() {
       setCommits(commitsData);
       setContributors(contributorsData);
       
-      // Filter out non-code files to keep graph manageable
-      const codeFiles = tree.filter(f => {
+      // 1. All files should be in the graph nodes to avoid "missing data"
+      // 2. But only fetch content for code files to keep it fast
+      const allFiles = tree.filter(f => {
+        const pathParts = f.path.split('/');
+        return !pathParts.includes('node_modules') && !pathParts.includes('.git');
+      });
+
+      const codeFiles = allFiles.filter(f => {
+        const pathParts = f.path.split('/');
+        if (
+          pathParts.includes('dist') || 
+          pathParts.includes('build') ||
+          pathParts.includes('__tests__') || 
+          f.path.includes('.test.') || 
+          f.path.includes('.spec.')
+        ) {
+          return false;
+        }
         const ext = f.path.split('.').pop()?.toLowerCase();
-        // Exclude json, md, html, css if they are causing issues, or just keep them but ignore errors
-        return ['js', 'jsx', 'ts', 'tsx', 'py', 'go'].includes(ext || '');
+        const excludedExts = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'mp4', 'webm', 'mp3', 'wav', 'ogg', 'pdf', 'zip', 'tar', 'gz', 'rar', '7z', 'exe', 'dll', 'so', 'dylib', 'bin', 'dat', 'db', 'sqlite', 'sqlite3', 'woff', 'woff2', 'ttf', 'eot', 'otf'];
+        return !excludedExts.includes(ext || '');
       });
 
       // Fetch contents in parallel (with a limit to avoid rate limits)
-      const BATCH_SIZE = 20;
+      const BATCH_SIZE = 50; 
       const filesWithContent: { path: string, content?: string, size?: number }[] = [];
       
-      setProgress({ current: 0, total: codeFiles.length });
+      // Initialize with all files (no content yet)
+      const initialFiles = allFiles.map(f => ({ path: f.path, size: f.size }));
+      filesWithContent.push(...initialFiles);
+      
+      setProgress({ current: 0, total: codeFiles.length, status: 'Initializing Graph...' });
+      
+      // Initial graph build with all files (no links yet as no content)
+      let currentGraphData = await buildGraphDataAsync(filesWithContent);
+      setGraphData(currentGraphData);
       
       for (let i = 0; i < codeFiles.length; i += BATCH_SIZE) {
+        setProgress({ current: i, total: codeFiles.length, status: `Analyzing code batch ${Math.floor(i/BATCH_SIZE) + 1}...` });
+        
         const batch = codeFiles.slice(i, i + BATCH_SIZE);
         const promises = batch.map(async (file) => {
           try {
@@ -91,12 +150,21 @@ export default function App() {
           }
         });
         const results = await Promise.all(promises);
-        filesWithContent.push(...results);
-        setProgress({ current: Math.min(i + BATCH_SIZE, codeFiles.length), total: codeFiles.length });
+        
+        // Update the filesWithContent array with the new content
+        results.forEach(res => {
+          const idx = filesWithContent.findIndex(f => f.path === res.path);
+          if (idx !== -1) {
+            filesWithContent[idx] = res;
+          }
+        });
+        
+        setProgress({ current: Math.min(i + BATCH_SIZE, codeFiles.length), total: codeFiles.length, status: 'Updating Dependencies...' });
+        
+        // Incremental update - build graph as we go
+        currentGraphData = await buildGraphDataAsync(filesWithContent);
+        setGraphData(currentGraphData);
       }
-
-      const data = buildGraphData(filesWithContent);
-      setGraphData(data);
     } catch (err: any) {
       setError(err.message || 'An error occurred while fetching the repository');
     } finally {
@@ -173,6 +241,13 @@ export default function App() {
               >
                 <FileCode2 className="w-4 h-4" />
               </button>
+              <button
+                onClick={() => setViewMode('chat')}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'chat' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+                title="AI Architect"
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
             </div>
           )}
         </div>
@@ -181,7 +256,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 flex overflow-hidden relative">
         {error && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-2 px-4 py-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg shadow-lg backdrop-blur-sm">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-2 px-4 py-3 bg-red-50 border border-red-200 text-red-600 rounded-lg shadow-lg backdrop-blur-sm">
             <AlertCircle className="w-5 h-5" />
             <span className="text-sm font-medium">{error}</span>
           </div>
@@ -200,82 +275,83 @@ export default function App() {
         )}
 
         {loading && (
-          <div className="flex-1 flex flex-col items-center justify-center text-zinc-500">
-            <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4" />
-            <p className="text-sm font-medium animate-pulse">Cloning and analyzing repository...</p>
-            {progress && (
-              <div className="mt-6 w-64">
-                <div className="flex justify-between text-xs mb-1 text-zinc-500">
-                  <span>Fetching files</span>
-                  <span>{progress.current} / {progress.total}</span>
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/50 backdrop-blur-sm">
+            <div className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 flex flex-col items-center">
+              <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mb-4" />
+              <p className="text-sm font-medium text-zinc-900">Cloning and analyzing repository...</p>
+              {progress && (
+                <div className="mt-6 w-64">
+                  <div className="flex justify-between text-xs mb-1 text-zinc-500">
+                    <span>{progress.status || 'Fetching files'}</span>
+                    <span>{progress.current} / {progress.total}</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-indigo-500 transition-all duration-300 ease-out"
+                      style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="w-full h-1.5 bg-zinc-200 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-indigo-500 transition-all duration-300 ease-out"
-                    style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                  />
-                </div>
-              </div>
-            )}
-            <p className="text-xs mt-4 opacity-60">This might take a minute for large repositories.</p>
+              )}
+              <p className="text-xs mt-4 text-zinc-500">This might take a minute for large repositories.</p>
+            </div>
           </div>
         )}
 
         {graphData && (
           <>
-            {viewMode !== 'graph' && (
-              <Sidebar 
-                files={graphData.nodes} 
-                onFileSelect={setSelectedNode} 
-                selectedFileId={selectedNode?.id}
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-              />
-            )}
             
             <div className={`flex-1 flex overflow-hidden bg-white ${viewMode === 'graph' ? 'p-0 gap-0' : 'p-4 gap-4'}`}>
-              {viewMode !== 'file' && (
-                <div className="transition-all duration-300 h-full flex-1 min-w-0">
-                  <GraphView 
-                    data={graphData} 
-                    commits={commits}
-                    contributors={contributors}
-                    searchQuery={searchQuery}
-                    onNodeClick={(node) => {
-                      setSelectedNode(node);
-                      setHighlightString(null);
-                      if (node) {
-                        setViewMode('split');
-                      }
-                    }} 
-                    onLinkClick={(link) => {
-                      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-                      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-                      const sourceNode = graphData.nodes.find(n => n.id === sourceId);
-                      const targetNode = graphData.nodes.find(n => n.id === targetId);
-                      if (sourceNode && targetNode) {
-                        setSelectedNode(sourceNode);
-                        const targetName = targetNode.name.split('.')[0];
-                        setHighlightString(targetName);
-                        setViewMode('split');
-                      }
-                    }}
-                    selectedNodeId={selectedNode?.id} 
-                    config={graphConfig}
-                    onStatsChange={setStats}
-                    viewMode={viewMode}
-                  />
+              {viewMode === 'chat' ? (
+                <div className="flex-1 h-full">
+                  <AIAssistant graphData={graphData} repoUrl={repoUrl} />
                 </div>
-              )}
-              
-              {viewMode !== 'graph' && (
-                <div className="transition-all duration-300 h-full flex-1 min-w-0">
-                  <FileViewer file={selectedNode} highlightString={highlightString} stats={stats} />
-                </div>
+              ) : (
+                <>
+                  {viewMode !== 'file' && (
+                    <div className="transition-all duration-300 h-full flex-1 min-w-0">
+                      <GraphView 
+                        data={graphData} 
+                          commits={commits}
+                          contributors={contributors}
+                          searchQuery={searchQuery}
+                          onConfigChange={setGraphConfig}
+                          onNodeClick={(node) => {
+                            setSelectedNode(node);
+                            setHighlightString(null);
+                            if (node) {
+                              setViewMode('split');
+                            }
+                          }} 
+                          onLinkClick={(link) => {
+                            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+                            const sourceNode = graphData.nodes.find(n => n.id === sourceId);
+                            const targetNode = graphData.nodes.find(n => n.id === targetId);
+                            if (sourceNode && targetNode) {
+                              setSelectedNode(sourceNode);
+                              const targetName = targetNode.name.split('.')[0];
+                              setHighlightString(targetName);
+                              setViewMode('split');
+                            }
+                          }}
+                          selectedNodeId={selectedNode?.id} 
+                          config={graphConfig}
+                          onStatsChange={setStats}
+                          viewMode={viewMode}
+                        />
+                      </div>
+                    )}
+                    
+                    {viewMode !== 'graph' && (
+                      <div className="transition-all duration-300 h-full flex-1 min-w-0">
+                        <FileViewer file={selectedNode} highlightString={highlightString} stats={stats} />
+                      </div>
+                    )}
+                </>
               )}
             </div>
             
-            <TaxonomySidebar config={graphConfig} setConfig={setGraphConfig} stats={stats} />
           </>
         )}
       </main>

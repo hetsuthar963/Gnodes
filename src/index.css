@@ -5,12 +5,6 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-/* Global utility overrides for speed and space utilization */
-* {
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-
 .custom-scrollbar::-webkit-scrollbar {
   width: 8px;
   height: 8px;

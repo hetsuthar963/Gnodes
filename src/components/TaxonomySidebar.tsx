@@ -3,8 +3,8 @@ import { GitCommit, Users, FolderTree, Layers, Database, LayoutTemplate, BarChar
 import { clsx } from 'clsx';
 
 export type GraphConfig = {
-  model: 'dependency' | 'tree' | 'commit-linear' | 'commit-branch' | 'commit-merge' | 'contributor-activity' | 'contributor-collab' | 'raw-text' | 'token' | 'ast' | 'cfg' | 'dfg' | 'pdg' | 'call' | 'git-dag' | 'commit-file' | 'cpg' | 'knowledge';
-  metric: 'none' | 'centrality' | 'cluster';
+  model: 'dependency' | 'tree' | 'commit-linear' | 'commit-branch' | 'commit-merge' | 'contributor-activity' | 'contributor-collab' | 'raw-text' | 'token' | 'ast' | 'cfg' | 'dfg' | 'pdg' | 'call' | 'git-dag' | 'commit-file' | 'cpg' | 'knowledge' | 'collapsible-tree';
+  metric: 'none' | 'centrality' | 'cluster' | 'physics-state' | 'physics-effects' | 'physics-data' | 'physics-comp' | 'physics-complexity';
   encoding: 'force' | 'dag-td' | 'dag-lr' | 'radial' | 'circular';
 };
 
@@ -45,6 +45,7 @@ export default function TaxonomySidebar({ config, setConfig, stats }: Props) {
       icon: <FolderTree size={16} />,
       options: [
         { label: "Directory Tree Graph", active: config.model === 'tree', onClick: () => updateConfig({ model: 'tree' }) },
+        { label: "Collapsible Tree", active: config.model === 'collapsible-tree', onClick: () => updateConfig({ model: 'collapsible-tree' }) },
       ]
     },
     {
@@ -66,6 +67,18 @@ export default function TaxonomySidebar({ config, setConfig, stats }: Props) {
         { label: "Hierarchical (Left-Right)", active: config.encoding === 'dag-lr', onClick: () => updateConfig({ encoding: 'dag-lr' }) },
         { label: "Radial Tree", active: config.encoding === 'radial', onClick: () => updateConfig({ encoding: 'radial' }) },
         { label: "Circular Layout", active: config.encoding === 'circular', onClick: () => updateConfig({ encoding: 'circular' }) },
+      ]
+    },
+    {
+      title: "6. Physics & Logic Metrics",
+      icon: <BarChart2 size={16} />,
+      options: [
+        { label: "None", active: config.metric === 'none', onClick: () => updateConfig({ metric: 'none' }) },
+        { label: "State Management", active: config.metric === 'physics-state', onClick: () => updateConfig({ metric: 'physics-state' }) },
+        { label: "Side Effects", active: config.metric === 'physics-effects', onClick: () => updateConfig({ metric: 'physics-effects' }) },
+        { label: "Data Flow", active: config.metric === 'physics-data', onClick: () => updateConfig({ metric: 'physics-data' }) },
+        { label: "Computation", active: config.metric === 'physics-comp', onClick: () => updateConfig({ metric: 'physics-comp' }) },
+        { label: "Code Complexity", active: config.metric === 'physics-complexity', onClick: () => updateConfig({ metric: 'physics-complexity' }) },
       ]
     }
   ];
@@ -195,7 +208,7 @@ export default function TaxonomySidebar({ config, setConfig, stats }: Props) {
                   title={opt.disabled ? "Requires full Git history / API integration" : ""}
                 >
                   <span className="truncate">{opt.label}</span>
-                  {opt.disabled && <span className="text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500">WIP</span>}
+                  {opt.disabled && <span className="text-[10px] bg-zinc-200 px-1.5 py-0.5 rounded text-zinc-500">WIP</span>}
                 </button>
               ))}
             </div>
