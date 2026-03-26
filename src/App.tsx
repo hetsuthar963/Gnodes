@@ -4,7 +4,8 @@ import { fetchRepoTree, fetchFileContent, GitHubFile } from './utils/github';
 import { buildGraphData, GraphData, FileNode } from './utils/parser';
 import GraphView from './components/GraphView';
 import FileViewer from './components/FileViewer';
-import { GraphConfig } from './components/TaxonomySidebar';
+import TaxonomySidebar, { GraphConfig } from './components/TaxonomySidebar';
+import Sidebar from './components/Sidebar';
 import AIAssistant from './components/AIAssistant';
 import { Github, Key, Search, Loader2, AlertCircle, Columns, Maximize2, FileCode2, Sparkles } from 'lucide-react';
 
@@ -300,7 +301,21 @@ export default function App() {
 
         {graphData && (
           <>
-            
+            {viewMode !== 'chat' && viewMode !== 'file' && (
+              <TaxonomySidebar config={graphConfig} setConfig={setGraphConfig} stats={stats} />
+            )}
+            {(viewMode === 'split' || viewMode === 'file') && (
+              <Sidebar 
+                files={graphData.nodes}
+                onFileSelect={(node) => {
+                  setSelectedNode(node);
+                  setHighlightString(null);
+                }}
+                selectedFileId={selectedNode?.id}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+              />
+            )}
             <div className={`flex-1 flex overflow-hidden bg-white ${viewMode === 'graph' ? 'p-0 gap-0' : 'p-4 gap-4'}`}>
               {viewMode === 'chat' ? (
                 <div className="flex-1 h-full">

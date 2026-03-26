@@ -11,6 +11,32 @@ vi.mock('./utils/github', () => ({
   fetchContributors: vi.fn(),
 }));
 
+vi.mock('./workers/data.worker?worker', () => {
+  return {
+    default: class MockWorker {
+      listeners: any = {};
+      addEventListener(event: string, callback: Function) {
+        if (!this.listeners[event]) this.listeners[event] = [];
+        this.listeners[event].push(callback);
+      }
+      removeEventListener(event: string, callback: Function) {
+        if (this.listeners[event]) {
+          this.listeners[event] = this.listeners[event].filter((cb: any) => cb !== callback);
+        }
+      }
+      postMessage(data: any) {
+        if (data.type === 'BUILD_GRAPH') {
+          const listeners = this.listeners['message'] || [];
+          setTimeout(() => {
+            listeners.forEach((cb: any) => cb({ data: { type: 'GRAPH_BUILT', payload: { nodes: [], links: [] } } }));
+          }, 0);
+        }
+      }
+      terminate = vi.fn();
+    }
+  };
+});
+
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks();
